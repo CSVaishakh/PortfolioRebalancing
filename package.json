@@ -1,0 +1,8 @@
+{
+  "name": "portfolio-rebalancing",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
