@@ -1,6 +1,10 @@
 {
   "name": "portfolio-rebalancing",
   "private": true,
+  "packageManager": "npm@11.8.0",
+  "devDependencies": {
+    "turbo": "latest"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
