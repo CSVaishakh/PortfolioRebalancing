@@ -20,5 +20,8 @@
     "db:push": "turbo run db:push",
     "db:studio": "turbo run db:studio",
     "db:reset": "docker compose -f packages/database/docker-compose.yml down -v && npm run db:start && turbo run db:push"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3"
   }
 }
