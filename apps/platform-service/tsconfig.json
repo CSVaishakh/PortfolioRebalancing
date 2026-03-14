@@ -1,38 +1,19 @@
 {
-	"compilerOptions": {
-		"target": "es5",
-		"module": "commonjs",
-		"moduleResolution": "node",
-		"lib": [
-			"es2015"
-		],
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ESNext"],
+    "types": ["node"],
 
-		"rootDir": "src",
-		"outDir": "lib",
+    "rootDir": "src",
+    "outDir": "dist",
 
-		"strict": true,
-		"alwaysStrict": true,
-		"strictFunctionTypes": true,
-		"strictNullChecks": true,
-		"strictPropertyInitialization": true,
-
-		"forceConsistentCasingInFileNames": true,
-		"noImplicitAny": true,
-		"noImplicitReturns": true,
-		"noImplicitThis": true,
-		"noFallthroughCasesInSwitch": true,
-		"noUnusedLocals": true,
-		"noUnusedParameters": true,
-
-		"emitDecoratorMetadata": true,
-		"experimentalDecorators": true,
-		"downlevelIteration": true,
-		"declaration": true,
-
-		"pretty": true
-	},
-	"include": [
-		"typings/**/*",
-		"src/**/*"
-	]
+    "strict": true,
+    "declaration": true,
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"]
 }
