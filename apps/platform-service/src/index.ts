@@ -1,7 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { db, users } from "database";
+import { db } from "database";
+import { sql } from "drizzle-orm";
 
 const app = express();
 
@@ -9,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/health", async (_req, res) => {
-  await db.select().from(users).limit(1);
+  await db.execute(sql`SELECT 1`);
   res.json({ status: "ok", db: "connected" });
 });
 
