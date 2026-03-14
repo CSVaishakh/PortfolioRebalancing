@@ -7,6 +7,14 @@
   ],
   "scripts": {
     "dev": "turbo run dev",
-    "build": "turbo run build"
+    "build": "turbo run build",
+    "db:start": "docker compose -f packages/database/docker-compose.yml up -d db",
+    "db:stop": "docker compose -f packages/database/docker-compose.yml stop db",
+    "db:shell": "docker exec -it portfolio-rebalancing-db psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-portfolio_rebalancing}",
+    "db:generate": "turbo run db:generate",
+    "db:migrate": "turbo run db:migrate",
+    "db:push": "turbo run db:push",
+    "db:studio": "turbo run db:studio",
+    "db:reset": "docker compose -f packages/database/docker-compose.yml down -v && npm run db:start && turbo run db:push"
   }
 }
