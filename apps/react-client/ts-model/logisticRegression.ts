@@ -149,6 +149,39 @@ class LogisticRegression {
     });
   }
 
+  /**
+   * Load weights into the model — the entry point for the federated learning
+   * receive-global-weights step.
+   *
+   * `coef`      — shape (1, n_features), matching sklearn's coef_ convention.
+   * `intercept` — shape (1,), matching sklearn's intercept_ convention.
+   *
+   * Builds the model first if it hasn't been built yet (e.g. before the first
+   * local fit), so the client can warm-start from the global model without
+   * needing local training data upfront.
+   */
+  setWeights(coef: number[][], intercept: number[]): void {
+    const nFeatures = coef[0].length;
+
+    if (!this.model) this.build(nFeatures);
+
+    // coef is (1, n_features) — TF.js dense kernel expects (n_features, 1)
+    const W = tf.tensor2d(coef).transpose();
+    const b = tf.tensor1d(intercept);
+
+    this.model!.layers[0].setWeights(
+      this.fit_intercept ? [W, b] : [W]
+    );
+
+    W.dispose();
+    b.dispose();
+
+    // Keep the sklearn-style attributes in sync
+    this.coef_          = coef;
+    this.intercept_     = intercept;
+    this.n_features_in_ = nFeatures;
+  }
+
   /** Mean accuracy on (X, y). Mirrors sklearn's `score`. */
   score(X: number[][], y: number[]): number {
     const preds = this.predict(X);
