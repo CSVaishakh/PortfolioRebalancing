@@ -4,6 +4,7 @@ import cors from "cors";
 import { db } from "database";
 import { sql } from "drizzle-orm";
 import { authRouter } from "./routes/auth.router.js";
+import { clientRouter } from "./routes/client.router.js";
 
 const app = express();
 
@@ -11,6 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/auth", authRouter);
+app.use("/client", clientRouter);
 
 app.get("/health", async (_req, res) => {
   await db.execute(sql`SELECT 1`);
