@@ -182,6 +182,17 @@ class LogisticRegression {
     this.n_features_in_ = nFeatures;
   }
 
+  /**
+   * Returns the current coef_ and intercept_ — ready to POST to
+   * /client/model/weights for the federated upload step.
+   */
+  getWeights(): { coef: number[][]; intercept: number[] } {
+    return {
+      coef:      this.coef_!,
+      intercept: this.intercept_!,
+    };
+  }
+
   /** Mean accuracy on (X, y). Mirrors sklearn's `score`. */
   score(X: number[][], y: number[]): number {
     const preds = this.predict(X);
