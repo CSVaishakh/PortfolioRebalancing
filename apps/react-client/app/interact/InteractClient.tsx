@@ -87,12 +87,12 @@ export default function InteractClient() {
     try {
       // ── Step 1: Parse portfolio file ────────────────────────────────────────
       addLog("Parsing portfolio file…");
-      const { holdings, warnings } = await parsePortfolioFile(file);
+      const { holdings, errors: parseErrors } = await parsePortfolioFile(file);
 
-      for (const w of warnings) addLog(w, "warn");
+      for (const e of parseErrors) addLog(e, parseErrors.some(e => e.startsWith("Missing")) ? "error" : "warn");
 
       if (!holdings.length) {
-        addLog("No valid holdings found in the file.", "error");
+        addLog("No valid holdings found. Make sure you are using the provided template.", "error");
         setRunning(false);
         return;
       }
@@ -125,6 +125,16 @@ export default function InteractClient() {
         `Dataset ready — ${X.length} samples (${nRebalance} rebalance · ${nHold} hold · ${nDropped} ambiguous dropped).`,
         "ok"
       );
+
+      const isSingleClass = nRebalance === 0 || nHold === 0;
+      if (isSingleClass) {
+        addLog(
+          `All training samples have the same label (${nRebalance > 0 ? "rebalance" : "hold"}). ` +
+          `This usually means portfolio conditions (concentration or drift) dominate every market scenario. ` +
+          `The prediction is still valid but reflects a clearly ${nRebalance > 0 ? "unbalanced" : "stable"} portfolio.`,
+          "warn"
+        );
+      }
 
       // ── Step 5: Load global model weights (optional warm-start) ──────────────
       addLog("Fetching global model weights for warm-start…");
@@ -166,7 +176,12 @@ export default function InteractClient() {
       await model.fit(X, y);
 
       const trainAccuracy = model.score(X, y);
-      addLog(`Model trained — train accuracy ${(trainAccuracy * 100).toFixed(1)}%.`, "ok");
+      addLog(
+        isSingleClass
+          ? `Model trained — accuracy N/A (single-class training data).`
+          : `Model trained — train accuracy ${(trainAccuracy * 100).toFixed(1)}%.`,
+        "ok"
+      );
 
       // ── Step 7: Build live prediction feature vector ──────────────────────────
       addLog("Computing live prediction feature vector…");
@@ -211,7 +226,8 @@ export default function InteractClient() {
             weightsUploaded = true;
             addLog("Weights uploaded — contributing to federated model.", "ok");
           } else {
-            addLog("Weight upload failed — server returned an error.", "warn");
+            const body = await res.json().catch(() => ({}));
+            addLog(`Weight upload failed (${res.status}): ${body.error ?? "server error"}.`, "warn");
           }
         } catch {
           addLog("Weight upload failed — could not reach server.", "warn");
@@ -263,49 +279,72 @@ export default function InteractClient() {
         <div>
           <h1 className="text-2xl font-bold">Portfolio Analysis</h1>
           <p className="text-zinc-400 text-sm mt-1">
-            Upload your holdings, train a local model on historical market data, and get a
-            rebalancing recommendation.
+            Fill in the template with your holdings, upload it, and get an AI rebalancing recommendation.
           </p>
+        </div>
+
+        {/* ── Template download banner ─────────────────────────────────────── */}
+        <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-5 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-indigo-300">Step 1 — Download the template</p>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Fill in your holdings using our Excel template. Required columns:{" "}
+              <span className="text-zinc-300 font-mono">Symbol · ISIN · Sector · Quantity · Average Buy Price · Current Price</span>
+            </p>
+          </div>
+          <a
+            href="/templates/portfolio-template.xlsx"
+            download="portfolio-template.xlsx"
+            className="shrink-0 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Download template
+          </a>
         </div>
 
         {/* ── Upload + Config row ─────────────────────────────────────────── */}
         <div className="grid md:grid-cols-2 gap-4">
           {/* Upload zone */}
-          <div
-            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={handleFileDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`rounded-xl border-2 border-dashed p-8 flex flex-col items-center justify-center cursor-pointer transition-colors ${
-              dragging
-                ? "border-indigo-400 bg-indigo-500/10"
-                : file
-                  ? "border-emerald-500/50 bg-emerald-500/5"
-                  : "border-zinc-700 hover:border-zinc-500"
-            }`}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              className="hidden"
-              onChange={handleFileChange}
-            />
-            <div className="text-3xl mb-3">{file ? "📄" : "⬆"}</div>
-            {file ? (
-              <>
-                <p className="text-sm font-medium text-emerald-400">{file.name}</p>
-                <p className="text-xs text-zinc-500 mt-1">Click to replace</p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm font-medium">Drop your portfolio file here</p>
-                <p className="text-xs text-zinc-500 mt-1">CSV or Excel · Zerodha, Groww, Angel One…</p>
-              </>
-            )}
+          <div>
+            <p className="text-xs font-medium text-zinc-400 mb-2">Step 2 — Upload your filled template</p>
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleFileDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`rounded-xl border-2 border-dashed p-8 flex flex-col items-center justify-center cursor-pointer transition-colors ${
+                dragging
+                  ? "border-indigo-400 bg-indigo-500/10"
+                  : file
+                    ? "border-emerald-500/50 bg-emerald-500/5"
+                    : "border-zinc-700 hover:border-zinc-500"
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                className="hidden"
+                onChange={handleFileChange}
+              />
+              <div className="text-3xl mb-3">{file ? "📄" : "⬆"}</div>
+              {file ? (
+                <>
+                  <p className="text-sm font-medium text-emerald-400">{file.name}</p>
+                  <p className="text-xs text-zinc-500 mt-1">Click to replace</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium">Drop your filled template here</p>
+                  <p className="text-xs text-zinc-500 mt-1">Accepts .xlsx or .csv</p>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Config */}
+          <div>
+          <p className="text-xs font-medium text-zinc-400 mb-2">Step 3 — Configure &amp; run</p>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-6 space-y-5">
             <div>
               <label className="block text-xs font-medium text-zinc-400 mb-2">
@@ -340,8 +379,9 @@ export default function InteractClient() {
               )}
             </button>
             {!file && (
-              <p className="text-xs text-zinc-600 text-center">Upload a portfolio file to continue</p>
+              <p className="text-xs text-zinc-600 text-center">Upload your filled template to continue</p>
             )}
+          </div>
           </div>
         </div>
 
