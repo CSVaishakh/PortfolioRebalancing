@@ -112,6 +112,10 @@ class LogisticRegression {
    */
   predict(X: number[][]): number[] {
     const proba = this.predict_proba(X);
+    // Single-class training: classes_ has only one element; always return it.
+    if (this.classes_!.length === 1) {
+      return proba.map(() => this.classes_![0]);
+    }
     return proba.map(row => this.classes_![row[1] >= 0.5 ? 1 : 0]);
   }
 
