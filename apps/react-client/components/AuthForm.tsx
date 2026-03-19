@@ -52,7 +52,7 @@ export default function AuthForm({ defaultMode }: Props) {
       }
 
       localStorage.setItem("token", data.token);
-      router.push("/dashboard");
+      router.push("/interact");
     } catch {
       setError("Could not reach the server. Please check your connection.");
     } finally {
