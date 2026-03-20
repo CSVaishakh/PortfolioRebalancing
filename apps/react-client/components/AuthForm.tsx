@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
@@ -69,14 +70,14 @@ export default function AuthForm({ defaultMode }: Props) {
 
       <div className="relative w-full max-w-md">
         {/* Logo */}
-        <a href="/" className="flex items-center justify-center gap-2 mb-8">
+        <Link href="/" className="flex items-center justify-center gap-2 mb-8">
           <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center text-white font-bold text-sm">
             P
           </div>
           <span className="text-white font-semibold text-lg tracking-tight">
             PortfolioIQ
           </span>
-        </a>
+        </Link>
 
         {/* Card */}
         <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-8 backdrop-blur-sm">

@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { parsePortfolioFile } from "@/lib/portfolioParser";
 import { parseNiftyCSV, getLatestMarketFeatures } from "@/lib/marketData";
@@ -49,6 +50,7 @@ function fmt(n: number, decimals = 2): string {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function InteractClient() {
+  const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [lastRebalanceDate, setLastRebalanceDate] = useState("");
@@ -56,6 +58,16 @@ export default function InteractClient() {
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [result, setResult] = useState<PredictionResult | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
+
+  useEffect(() => {
+    setSignedIn(!!localStorage.getItem("token"));
+  }, []);
+
+  function handleSignOut() {
+    localStorage.removeItem("token");
+    router.push("/auth");
+  }
 
   function addLog(msg: string, status: LogEntry["status"] = "info") {
     setLog((prev) => [...prev, { msg, status }]);
@@ -256,9 +268,18 @@ export default function InteractClient() {
           </div>
           <span className="font-semibold tracking-tight">PortfolioIQ</span>
         </Link>
-        <Link href="/auth" className="text-sm text-zinc-400 hover:text-white transition-colors">
-          Sign In
-        </Link>
+        {signedIn ? (
+          <button
+            onClick={handleSignOut}
+            className="text-sm text-zinc-400 hover:text-red-400 transition-colors"
+          >
+            Sign Out
+          </button>
+        ) : (
+          <Link href="/auth" className="text-sm text-zinc-400 hover:text-white transition-colors">
+            Sign In
+          </Link>
+        )}
       </nav>
 
       <main className="max-w-5xl mx-auto px-6 py-12 space-y-6">
