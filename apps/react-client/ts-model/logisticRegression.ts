@@ -75,10 +75,15 @@ class LogisticRegression {
    * `fit` returning self).
    */
   async fit(X: number[][], y: number[], onEpoch: EpochCallback | null = null): Promise<this> {
+    const nFeatures = X[0].length;
     this.classes_       = [...new Set(y)].sort((a, b) => a - b);
-    this.n_features_in_ = X[0].length;
+    this.n_features_in_ = nFeatures;
 
-    this.build(X[0].length);
+    // Only (re)build if no model exists yet or the input dimension changed.
+    // Preserves previously loaded global weights so fit() acts as a warm-start.
+    if (!this.model || this.coef_?.[0]?.length !== nFeatures) {
+      this.build(nFeatures);
+    }
 
     const Xt = tf.tensor2d(X);
     const yt = tf.tensor2d(y, [y.length, 1]);
