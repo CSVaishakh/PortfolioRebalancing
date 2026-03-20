@@ -23,6 +23,8 @@
     "db:migrate": "turbo run db:migrate",
     "db:push": "turbo run db:push",
     "db:studio": "turbo run db:studio",
+    "db:clear": "docker exec portfolio-rebalancing-db psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-portfolio_rebalancing} -c \"TRUNCATE usermodelhistory, globalmodelhistory RESTART IDENTITY; TRUNCATE users RESTART IDENTITY CASCADE;\"",
+    "db:clear:weights": "docker exec portfolio-rebalancing-db psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-portfolio_rebalancing} -c \"TRUNCATE usermodelhistory, globalmodelhistory RESTART IDENTITY;\"",
     "db:reset": "docker compose -f packages/database/docker-compose.yml down -v && npm run db:start && turbo run db:push"
   },
   "dependencies": {
