@@ -65,7 +65,7 @@ export default function AuthForm({ defaultMode }: Props) {
     <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center px-4">
       {/* Background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-indigo-600/10 rounded-full blur-3xl" />
+        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-150 h-150 bg-indigo-600/10 rounded-full blur-3xl" />
       </div>
 
       <div className="relative w-full max-w-md">
