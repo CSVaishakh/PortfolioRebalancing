@@ -92,10 +92,23 @@ clientRouter.post("/model/weights", async (req, res: Response) => {
     return;
   }
 
-  const row = await saveUserWeights(userId, coef, intercept);
+  let row;
+  try {
+    row = await saveUserWeights(userId, coef, intercept);
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    // FK violation means the JWT references a user that no longer exists (DB was reset)
+    const isStaleToken = msg.includes("foreign key") || msg.includes("violates");
+    console.error("[weights] saveUserWeights failed:", msg);
+    res.status(isStaleToken ? 401 : 500).json({
+      error: isStaleToken
+        ? "Session is stale — your account no longer exists. Please sign out and sign up again."
+        : "Failed to save weights.",
+    });
+    return;
+  }
 
   // Fire-and-forget: run FedAvg and push aggregated weights to the model-service.
-  // Errors are logged but never surface to the client.
   runFedAvg().catch((err) =>
     console.error("[FedAvg] aggregation failed:", (err as Error).message)
   );
