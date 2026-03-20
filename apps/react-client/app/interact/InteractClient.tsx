@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { parsePortfolioFile } from "@/lib/portfolioParser";
 import { parseNiftyCSV, getLatestMarketFeatures } from "@/lib/marketData";
 import {
@@ -253,15 +254,15 @@ export default function InteractClient() {
     <div className="min-h-screen bg-[#0a0a0f] text-white">
       {/* Nav */}
       <nav className="flex items-center justify-between px-6 py-4 max-w-5xl mx-auto border-b border-zinc-800">
-        <a href="/" className="flex items-center gap-2">
+        <Link href="/" className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-indigo-500 flex items-center justify-center text-white font-bold text-xs">
             P
           </div>
           <span className="font-semibold tracking-tight">PortfolioIQ</span>
-        </a>
-        <a href="/auth" className="text-sm text-zinc-400 hover:text-white transition-colors">
+        </Link>
+        <Link href="/auth" className="text-sm text-zinc-400 hover:text-white transition-colors">
           Sign In
-        </a>
+        </Link>
       </nav>
 
       <main className="max-w-5xl mx-auto px-6 py-12 space-y-6">
@@ -344,7 +345,7 @@ export default function InteractClient() {
                   value={lastRebalanceDate}
                   max={new Date().toISOString().split("T")[0]}
                   onChange={(e) => setLastRebalanceDate(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-lg bg-zinc-800 border border-zinc-700 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors [color-scheme:dark]"
+                  className="w-full px-4 py-2.5 rounded-lg bg-zinc-800 border border-zinc-700 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors scheme-dark"
                 />
                 {lastRebalanceDate && (
                   <p className="text-xs text-zinc-500 mt-1.5">
