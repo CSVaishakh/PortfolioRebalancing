@@ -5,6 +5,7 @@ import { db } from "database";
 import { sql } from "drizzle-orm";
 import { authRouter } from "./routes/auth.router.js";
 import { clientRouter } from "./routes/client.router.js";
+import { modelRouter } from "./routes/model.route.js";
 
 const app = express();
 
@@ -13,6 +14,7 @@ app.use(express.json());
 
 app.use("/auth", authRouter);
 app.use("/client", clientRouter);
+app.use("/model", modelRouter);
 
 app.get("/health", async (_req, res) => {
   await db.execute(sql`SELECT 1`);
