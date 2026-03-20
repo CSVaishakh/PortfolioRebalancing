@@ -130,17 +130,19 @@ export default function InteractClient() {
       // ── Step 5: Build feature vector ──────────────────────────────────────────
       const daysRebalance = lastRebalanceDate ? daysSince(lastRebalanceDate) : 0;
       const fv = buildFeatureVector(pf, mf, daysRebalance) as FeatureVector;
-      addLog(`Feature vector built — ${fv.length} features.`, "ok");
+      addLog(
+        `Feature vector [num_stocks=${fv[0]}, max_wt=${fv[1].toFixed(3)}, top3=${fv[2].toFixed(3)}, ` +
+        `drift=${fv[3].toFixed(3)}, ret=${fv[4].toFixed(4)}, vol=${fv[5].toFixed(6)}, ` +
+        `sec=${fv[6].toFixed(3)}, days_since_rebalance=${fv[7]}, ` +
+        `mkt_ret=${fv[8].toFixed(4)}, mkt_vol=${fv[9].toFixed(4)}, ` +
+        `drawdown=${fv[10].toFixed(4)}, trend=${fv[11]}]`,
+        "info"
+      );
 
       // ── Step 6: Label the feature vector ──────────────────────────────────────
       addLog("Labelling feature vector…");
       const label = labelFeatureVector(fv);
-
-      if (label === null) {
-        addLog("Label is ambiguous (exactly 1 condition group triggered). Skipping local training — will predict using global model only.", "warn");
-      } else {
-        addLog(`Label: ${label === 1 ? "REBALANCE (1)" : "HOLD (0)"}.`, "ok");
-      }
+      addLog(`Label: ${label === 1 ? "REBALANCE (1)" : "HOLD (0)"}.`, "ok");
 
       // ── Step 7: Load global model weights ────────────────────────────────────
       addLog("Fetching global model weights…");
@@ -177,16 +179,10 @@ export default function InteractClient() {
         model.setWeights(initialCoef, initialIntercept);
       }
 
-      let trained = false;
-      if (label !== null) {
-        addLog(`Training on single sample (label = ${label})…`);
-        // Mirror the model-service: model.fit([[fv]], [label])
-        await model.fit([fv], [label]);
-        trained = true;
-        addLog("Local training complete.", "ok");
-      } else {
-        addLog("Skipped training — using global model weights for prediction.", "info");
-      }
+      addLog(`Training on single sample (label = ${label})…`);
+      await model.fit([fv], [label]);
+      const trained = true;
+      addLog("Local training complete.", "ok");
 
       // ── Step 9: Predict ───────────────────────────────────────────────────────
       addLog("Running prediction…");
@@ -224,7 +220,7 @@ export default function InteractClient() {
         } catch {
           addLog("Weight upload failed — could not reach server.", "warn");
         }
-      } else if (!token) {
+      } else {
         addLog("Not signed in — weights not uploaded.", "warn");
       }
 
