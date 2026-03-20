@@ -1,5 +1,6 @@
 import { Router, Response } from "express";
 import { authMiddleware, AuthRequest } from "../middleware/auth.middleware.js";
+import { runFedAvg } from "./model.route.js";
 import {
   getUserById,
   getLatestGlobalModel,
@@ -92,6 +93,12 @@ clientRouter.post("/model/weights", async (req, res: Response) => {
   }
 
   const row = await saveUserWeights(userId, coef, intercept);
+
+  // Fire-and-forget: run FedAvg and push aggregated weights to the model-service.
+  // Errors are logged but never surface to the client.
+  runFedAvg().catch((err) =>
+    console.error("[FedAvg] aggregation failed:", (err as Error).message)
+  );
 
   res.status(201).json({
     serialno:  row.serialno,

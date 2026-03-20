@@ -41,6 +41,29 @@ export async function saveUserWeights(
   return row!;
 }
 
+// Returns the single most-recent weight row for every user that has uploaded weights.
+export async function getAllLatestUserWeights() {
+  const all = await db
+    .select()
+    .from(userModelHistory)
+    .orderBy(desc(userModelHistory.timestamp));
+
+  const seen = new Set<number>();
+  return all.filter((row) => {
+    if (!row.userid || seen.has(row.userid)) return false;
+    seen.add(row.userid);
+    return true;
+  });
+}
+
+export async function saveGlobalWeights(coeff: number[][], intercept: number[]) {
+  const [row] = await db
+    .insert(globalModelHistory)
+    .values({ coeff, intercept })
+    .returning();
+  return row!;
+}
+
 export async function getUserModelHistory(
   userId: number,
   limit: number,

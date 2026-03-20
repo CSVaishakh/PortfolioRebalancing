@@ -1,12 +1,11 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { parsePortfolioFile, type PortfolioHolding } from "@/lib/portfolioParser";
+import { parsePortfolioFile } from "@/lib/portfolioParser";
 import { parseNiftyCSV, getLatestMarketFeatures } from "@/lib/marketData";
 import {
   computePortfolioFeatures,
   buildFeatureVector,
-  buildTrainingDataset,
   labelFeatureVector,
   evaluateConditions,
   type PortfolioFeatures,
@@ -27,10 +26,7 @@ interface LogEntry {
 interface PredictionResult {
   label: 0 | 1;
   probability: number;
-  trainSize: number;
-  nRebalance: number;
-  nHold: number;
-  nDropped: number;
+  trained: boolean;          // false when label was ambiguous — global model used as-is
   portfolioFeatures: PortfolioFeatures;
   conditions: ConditionResult[];
   featureVector: FeatureVector;
@@ -89,8 +85,9 @@ export default function InteractClient() {
       addLog("Parsing portfolio file…");
       const { holdings, errors: parseErrors } = await parsePortfolioFile(file);
 
-      for (const e of parseErrors) addLog(e, parseErrors.some(e => e.startsWith("Missing")) ? "error" : "warn");
-
+      for (const e of parseErrors) {
+        addLog(e, e.startsWith("Missing") ? "error" : "warn");
+      }
       if (!holdings.length) {
         addLog("No valid holdings found. Make sure you are using the provided template.", "error");
         setRunning(false);
@@ -98,7 +95,7 @@ export default function InteractClient() {
       }
       addLog(`Portfolio parsed — ${holdings.length} holdings loaded.`, "ok");
 
-      // ── Step 2: Load market data ─────────────────────────────────────────────
+      // ── Step 2: Load market data (latest row only needed for features) ───────
       addLog("Loading NIFTY 100 market data…");
       const csvText = await fetch(MARKET_CSV).then((r) => r.text());
       const marketRows = parseNiftyCSV(csvText);
@@ -108,36 +105,44 @@ export default function InteractClient() {
       addLog("Computing portfolio features…");
       const pf = computePortfolioFeatures(holdings);
       addLog(
-        `Portfolio features — ${pf.num_stocks} stocks · max weight ${fmt(pf.max_stock_weight)} · drift ${fmt(pf.total_weight_drift)}`,
+        `Portfolio: ${pf.num_stocks} stocks · max weight ${fmt(pf.max_stock_weight)} · ` +
+        `drift ${fmt(pf.total_weight_drift)} · sector conc. ${fmt(pf.sector_concentration)}`,
         "ok"
       );
 
-      // ── Step 4: Build training dataset ───────────────────────────────────────
-      addLog("Generating training dataset from historical market data…");
-      const { X, y, nRebalance, nHold, nDropped } = buildTrainingDataset(pf, marketRows);
-
-      if (!X.length) {
-        addLog("Training dataset is empty — not enough labeled samples.", "error");
+      // ── Step 4: Compute current market features ───────────────────────────────
+      addLog("Computing current market features…");
+      const mf = getLatestMarketFeatures(marketRows);
+      if (!mf) {
+        addLog("Not enough market history to compute features (need ≥ 90 trading days).", "error");
         setRunning(false);
         return;
       }
       addLog(
-        `Dataset ready — ${X.length} samples (${nRebalance} rebalance · ${nHold} hold · ${nDropped} ambiguous dropped).`,
+        `Market: 30d return ${fmt(mf.market_return_30d)} · ` +
+        `30d vol ${fmt(mf.market_volatility_30d)} · ` +
+        `90d drawdown ${fmt(mf.market_drawdown_90d)} · ` +
+        `trend ${mf.market_trend === 1 ? "bullish" : "bearish"}`,
         "ok"
       );
 
-      const isSingleClass = nRebalance === 0 || nHold === 0;
-      if (isSingleClass) {
-        addLog(
-          `All training samples have the same label (${nRebalance > 0 ? "rebalance" : "hold"}). ` +
-          `This usually means portfolio conditions (concentration or drift) dominate every market scenario. ` +
-          `The prediction is still valid but reflects a clearly ${nRebalance > 0 ? "unbalanced" : "stable"} portfolio.`,
-          "warn"
-        );
+      // ── Step 5: Build feature vector ──────────────────────────────────────────
+      const daysRebalance = lastRebalanceDate ? daysSince(lastRebalanceDate) : 0;
+      const fv = buildFeatureVector(pf, mf, daysRebalance) as FeatureVector;
+      addLog(`Feature vector built — ${fv.length} features.`, "ok");
+
+      // ── Step 6: Label the feature vector ──────────────────────────────────────
+      addLog("Labelling feature vector…");
+      const label = labelFeatureVector(fv);
+
+      if (label === null) {
+        addLog("Label is ambiguous (exactly 1 condition group triggered). Skipping local training — will predict using global model only.", "warn");
+      } else {
+        addLog(`Label: ${label === 1 ? "REBALANCE (1)" : "HOLD (0)"}.`, "ok");
       }
 
-      // ── Step 5: Load global model weights (optional warm-start) ──────────────
-      addLog("Fetching global model weights for warm-start…");
+      // ── Step 7: Load global model weights ────────────────────────────────────
+      addLog("Fetching global model weights…");
       const token = localStorage.getItem("token");
       let initialCoef: number[][] | null = null;
       let initialIntercept: number[] | null = null;
@@ -145,27 +150,25 @@ export default function InteractClient() {
       if (token) {
         try {
           const res = await fetch(`${API_BASE}/client/model/global`, {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { token: token },
           });
           if (res.ok) {
             const data = await res.json();
             initialCoef = data.coef;
             initialIntercept = data.intercept;
-            addLog("Global weights loaded — using as warm-start.", "ok");
+            addLog("Global weights loaded.", "ok");
           } else {
-            addLog("No global weights available — training from scratch.", "warn");
+            addLog("No global weights available — starting from random initialisation.", "warn");
           }
         } catch {
-          addLog("Could not reach server for global weights — training from scratch.", "warn");
+          addLog("Could not reach server — starting from random initialisation.", "warn");
         }
       } else {
-        addLog("Not signed in — skipping global weight fetch.", "warn");
+        addLog("Not signed in — starting from random initialisation.", "warn");
       }
 
-      // ── Step 6: Train model locally ──────────────────────────────────────────
-      addLog("Training logistic regression model locally…");
-
-      // Dynamic import keeps TF.js out of the SSR bundle
+      // ── Step 8: Load model + optionally train on the single sample ────────────
+      addLog("Loading model…");
       const { default: LogisticRegression } = await import("@/ts-model/logisticRegression");
       const model = new LogisticRegression({ C: 1.0, max_iter: 200, lr: 0.05 });
 
@@ -173,44 +176,32 @@ export default function InteractClient() {
         model.setWeights(initialCoef, initialIntercept);
       }
 
-      await model.fit(X, y);
-
-      const trainAccuracy = model.score(X, y);
-      addLog(
-        isSingleClass
-          ? `Model trained — accuracy N/A (single-class training data).`
-          : `Model trained — train accuracy ${(trainAccuracy * 100).toFixed(1)}%.`,
-        "ok"
-      );
-
-      // ── Step 7: Build live prediction feature vector ──────────────────────────
-      addLog("Computing live prediction feature vector…");
-      const latestMF = getLatestMarketFeatures(marketRows);
-
-      if (!latestMF) {
-        addLog("Could not compute latest market features.", "error");
-        setRunning(false);
-        return;
+      let trained = false;
+      if (label !== null) {
+        addLog(`Training on single sample (label = ${label})…`);
+        // Mirror the model-service: model.fit([[fv]], [label])
+        await model.fit([fv], [label]);
+        trained = true;
+        addLog("Local training complete.", "ok");
+      } else {
+        addLog("Skipped training — using global model weights for prediction.", "info");
       }
 
-      const daysRebalance = lastRebalanceDate ? daysSince(lastRebalanceDate) : 0;
-      const liveFV = buildFeatureVector(pf, latestMF, daysRebalance) as FeatureVector;
-
-      // ── Step 8: Predict ───────────────────────────────────────────────────────
+      // ── Step 9: Predict ───────────────────────────────────────────────────────
       addLog("Running prediction…");
-      const probas = model.predict_proba([liveFV]);
+      const probas = model.predict_proba([fv]);
       const pRebalance = probas[0][1];
-      const label = pRebalance >= 0.5 ? 1 : 0;
-      const conditions = evaluateConditions(liveFV);
-
+      const predictedLabel: 0 | 1 = pRebalance >= 0.5 ? 1 : 0;
+      const confidence = Math.max(pRebalance, 1 - pRebalance);
+      const conditions = evaluateConditions(fv);
       addLog(
-        `Prediction: ${label === 1 ? "REBALANCE" : "HOLD"} (confidence ${(Math.max(pRebalance, 1 - pRebalance) * 100).toFixed(1)}%).`,
+        `Prediction: ${predictedLabel === 1 ? "REBALANCE" : "HOLD"} — confidence ${(confidence * 100).toFixed(1)}%`,
         "ok"
       );
 
-      // ── Step 9: Upload weights to server ──────────────────────────────────────
+      // ── Step 10: Upload weights ───────────────────────────────────────────────
       let weightsUploaded = false;
-      if (token) {
+      if (token && trained) {
         addLog("Uploading model weights to server…");
         try {
           const { coef, intercept } = model.getWeights();
@@ -218,9 +209,9 @@ export default function InteractClient() {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              token: token,
             },
-            body: JSON.stringify({ coef, intercept, n_samples: X.length }),
+            body: JSON.stringify({ coef, intercept, n_samples: 1 }),
           });
           if (res.ok) {
             weightsUploaded = true;
@@ -232,23 +223,21 @@ export default function InteractClient() {
         } catch {
           addLog("Weight upload failed — could not reach server.", "warn");
         }
-      } else {
-        addLog("Not signed in — weights not uploaded to server.", "warn");
+      } else if (!token) {
+        addLog("Not signed in — weights not uploaded.", "warn");
       }
 
       // ── Done ──────────────────────────────────────────────────────────────────
       setResult({
-        label,
+        label: predictedLabel,
         probability: pRebalance,
-        trainSize: X.length,
-        nRebalance,
-        nHold,
-        nDropped,
+        trained,
         portfolioFeatures: pf,
         conditions,
-        featureVector: liveFV,
+        featureVector: fv,
         weightsUploaded,
       });
+
     } catch (err) {
       addLog(`Unexpected error: ${(err as Error).message}`, "error");
     } finally {
@@ -288,7 +277,7 @@ export default function InteractClient() {
           <div>
             <p className="text-sm font-medium text-indigo-300">Step 1 — Download the template</p>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Fill in your holdings using our Excel template. Required columns:{" "}
+              Fill in your holdings.{" "}
               <span className="text-zinc-300 font-mono">Symbol · ISIN · Sector · Quantity · Average Buy Price · Current Price</span>
             </p>
           </div>
@@ -344,44 +333,44 @@ export default function InteractClient() {
 
           {/* Config */}
           <div>
-          <p className="text-xs font-medium text-zinc-400 mb-2">Step 3 — Configure &amp; run</p>
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-6 space-y-5">
-            <div>
-              <label className="block text-xs font-medium text-zinc-400 mb-2">
-                When did you last rebalance?
-              </label>
-              <input
-                type="date"
-                value={lastRebalanceDate}
-                max={new Date().toISOString().split("T")[0]}
-                onChange={(e) => setLastRebalanceDate(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-lg bg-zinc-800 border border-zinc-700 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors [color-scheme:dark]"
-              />
-              {lastRebalanceDate && (
-                <p className="text-xs text-zinc-500 mt-1.5">
-                  {daysSince(lastRebalanceDate)} days ago
-                </p>
+            <p className="text-xs font-medium text-zinc-400 mb-2">Step 3 — Configure &amp; run</p>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-6 space-y-5">
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-2">
+                  When did you last rebalance?
+                </label>
+                <input
+                  type="date"
+                  value={lastRebalanceDate}
+                  max={new Date().toISOString().split("T")[0]}
+                  onChange={(e) => setLastRebalanceDate(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-lg bg-zinc-800 border border-zinc-700 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors [color-scheme:dark]"
+                />
+                {lastRebalanceDate && (
+                  <p className="text-xs text-zinc-500 mt-1.5">
+                    {daysSince(lastRebalanceDate)} days ago
+                  </p>
+                )}
+              </div>
+
+              <button
+                onClick={runPrediction}
+                disabled={!canRun}
+                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg font-semibold text-sm transition-colors flex items-center justify-center gap-2"
+              >
+                {running ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Running…
+                  </>
+                ) : (
+                  "Run Prediction"
+                )}
+              </button>
+              {!file && (
+                <p className="text-xs text-zinc-600 text-center">Upload your filled template to continue</p>
               )}
             </div>
-
-            <button
-              onClick={runPrediction}
-              disabled={!canRun}
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg font-semibold text-sm transition-colors flex items-center justify-center gap-2"
-            >
-              {running ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Running…
-                </>
-              ) : (
-                "Run Prediction"
-              )}
-            </button>
-            {!file && (
-              <p className="text-xs text-zinc-600 text-center">Upload your filled template to continue</p>
-            )}
-          </div>
           </div>
         </div>
 
@@ -400,14 +389,12 @@ export default function InteractClient() {
                     {entry.status === "error" && <span className="text-red-400">✗</span>}
                     {entry.status === "info"  && <span className="text-zinc-500">·</span>}
                   </span>
-                  <span
-                    className={
-                      entry.status === "ok"    ? "text-zinc-200"
-                      : entry.status === "warn"  ? "text-yellow-300"
-                      : entry.status === "error" ? "text-red-300"
-                      : "text-zinc-400"
-                    }
-                  >
+                  <span className={
+                    entry.status === "ok"    ? "text-zinc-200"
+                    : entry.status === "warn"  ? "text-yellow-300"
+                    : entry.status === "error" ? "text-red-300"
+                    : "text-zinc-400"
+                  }>
                     {entry.msg}
                   </span>
                 </li>
@@ -420,23 +407,17 @@ export default function InteractClient() {
         {result && (
           <div className="space-y-4">
             {/* Main verdict */}
-            <div
-              className={`rounded-xl border p-6 ${
-                result.label === 1
-                  ? "border-orange-500/40 bg-orange-500/5"
-                  : "border-emerald-500/40 bg-emerald-500/5"
-              }`}
-            >
+            <div className={`rounded-xl border p-6 ${
+              result.label === 1
+                ? "border-orange-500/40 bg-orange-500/5"
+                : "border-emerald-500/40 bg-emerald-500/5"
+            }`}>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 mb-1">
                     Recommendation
                   </p>
-                  <p
-                    className={`text-3xl font-bold ${
-                      result.label === 1 ? "text-orange-400" : "text-emerald-400"
-                    }`}
-                  >
+                  <p className={`text-3xl font-bold ${result.label === 1 ? "text-orange-400" : "text-emerald-400"}`}>
                     {result.label === 1 ? "⚖ Rebalance" : "✓ Hold"}
                   </p>
                   <p className="text-sm text-zinc-400 mt-1">
@@ -444,17 +425,12 @@ export default function InteractClient() {
                     <span className="text-white font-medium">
                       {(Math.max(result.probability, 1 - result.probability) * 100).toFixed(1)}%
                     </span>
-                    {" "}·{" "}
-                    P(rebalance) = {(result.probability * 100).toFixed(1)}%
+                    {" · "}P(rebalance) = {(result.probability * 100).toFixed(1)}%
                   </p>
                 </div>
                 <div className="text-right text-xs text-zinc-500 space-y-0.5">
-                  <p>Trained on {result.trainSize} samples</p>
-                  <p>{result.nRebalance} rebalance · {result.nHold} hold</p>
-                  <p>{result.nDropped} ambiguous dropped</p>
-                  {result.weightsUploaded && (
-                    <p className="text-indigo-400">✓ Weights uploaded</p>
-                  )}
+                  <p>{result.trained ? "Locally trained · 1 sample" : "Global model only (ambiguous label)"}</p>
+                  {result.weightsUploaded && <p className="text-indigo-400">✓ Weights uploaded</p>}
                 </div>
               </div>
             </div>
@@ -466,14 +442,11 @@ export default function InteractClient() {
               </h2>
               <div className="grid sm:grid-cols-2 gap-3">
                 {result.conditions.map((c) => (
-                  <div
-                    key={c.name}
-                    className={`rounded-lg p-3 border ${
-                      c.triggered
-                        ? "border-orange-500/40 bg-orange-500/5"
-                        : "border-zinc-700 bg-zinc-800/30"
-                    }`}
-                  >
+                  <div key={c.name} className={`rounded-lg p-3 border ${
+                    c.triggered
+                      ? "border-orange-500/40 bg-orange-500/5"
+                      : "border-zinc-700 bg-zinc-800/30"
+                  }`}>
                     <div className="flex items-center gap-2 mb-1">
                       <span className={c.triggered ? "text-orange-400" : "text-zinc-500"}>
                         {c.triggered ? "●" : "○"}
@@ -495,14 +468,14 @@ export default function InteractClient() {
               </h2>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 {[
-                  { label: "Stocks", value: result.portfolioFeatures.num_stocks.toString() },
-                  { label: "Max Weight",      value: fmt(result.portfolioFeatures.max_stock_weight) },
+                  { label: "Stocks",              value: result.portfolioFeatures.num_stocks.toString() },
+                  { label: "Max Weight",           value: fmt(result.portfolioFeatures.max_stock_weight) },
                   { label: "Top-3 Concentration", value: fmt(result.portfolioFeatures.top3_concentration) },
-                  { label: "Weight Drift",    value: fmt(result.portfolioFeatures.total_weight_drift) },
-                  { label: "Portfolio Return", value: fmt(result.portfolioFeatures.portfolio_return) },
-                  { label: "Volatility",      value: result.portfolioFeatures.portfolio_volatility.toFixed(5) },
-                  { label: "Sector Conc.",    value: fmt(result.portfolioFeatures.sector_concentration) },
-                  { label: "Days Since Rebal.", value: result.featureVector[7].toString() },
+                  { label: "Weight Drift",         value: fmt(result.portfolioFeatures.total_weight_drift) },
+                  { label: "Portfolio Return",     value: fmt(result.portfolioFeatures.portfolio_return) },
+                  { label: "Volatility",           value: result.portfolioFeatures.portfolio_volatility.toFixed(5) },
+                  { label: "Sector Conc.",         value: fmt(result.portfolioFeatures.sector_concentration) },
+                  { label: "Days Since Rebal.",    value: result.featureVector[7].toString() },
                 ].map((s) => (
                   <div key={s.label}>
                     <p className="text-xs text-zinc-500">{s.label}</p>
@@ -519,25 +492,18 @@ export default function InteractClient() {
               </h2>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 {[
-                  { label: "30d Return",    value: fmt(result.featureVector[8]) },
+                  { label: "30d Return",     value: fmt(result.featureVector[8]) },
                   { label: "30d Volatility", value: fmt(result.featureVector[9]) },
-                  { label: "90d Drawdown",  value: fmt(result.featureVector[10]) },
-                  {
-                    label: "Trend",
-                    value: result.featureVector[11] === 1 ? "Bullish" : "Bearish",
-                  },
+                  { label: "90d Drawdown",   value: fmt(result.featureVector[10]) },
+                  { label: "Trend",          value: result.featureVector[11] === 1 ? "Bullish" : "Bearish" },
                 ].map((s) => (
                   <div key={s.label}>
                     <p className="text-xs text-zinc-500">{s.label}</p>
-                    <p
-                      className={`text-sm font-semibold mt-0.5 ${
-                        s.label === "Trend"
-                          ? result.featureVector[11] === 1
-                            ? "text-emerald-400"
-                            : "text-red-400"
-                          : ""
-                      }`}
-                    >
+                    <p className={`text-sm font-semibold mt-0.5 ${
+                      s.label === "Trend"
+                        ? result.featureVector[11] === 1 ? "text-emerald-400" : "text-red-400"
+                        : ""
+                    }`}>
                       {s.value}
                     </p>
                   </div>
