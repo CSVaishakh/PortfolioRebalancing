@@ -38,7 +38,6 @@ export interface LabeledDataset {
   y: number[];
   nRebalance: number;
   nHold: number;
-  nDropped: number;
 }
 
 // A volatility threshold used in the time_risk condition group.
@@ -124,7 +123,16 @@ export function buildFeatureVector(
 
 // ── Labeling ──────────────────────────────────────────────────────────────────
 
-export function labelFeatureVector(fv: FeatureVector): 0 | 1 | null {
+function getTScore(days: number): number {
+  if (days <= 14) return -5.0;
+  if (days <= 30) return -2.5;
+  if (days <= 45) return -0.5;
+  if (days <= 60) return  0.5;
+  if (days <= 90) return  2.5;
+  return 5.0;
+}
+
+export function labelFeatureVector(fv: FeatureVector): 0 | 1 {
   const [
     ,
     max_stock_weight,
@@ -135,21 +143,51 @@ export function labelFeatureVector(fv: FeatureVector): 0 | 1 | null {
     sector_concentration,
     days_since_last_rebalance,
     ,
-    ,
+    market_volatility_30d,
     market_drawdown_90d,
     market_trend,
   ] = fv;
 
-  const drift_crisis  = total_weight_drift > 0.20 && max_stock_weight > 0.35;
-  const market_shock  = market_drawdown_90d < -0.15 && market_trend === 0;
-  const time_risk     = days_since_last_rebalance > 90 && portfolio_volatility > VOLATILITY_THRESHOLD;
-  const concentration = top3_concentration > 0.60 && sector_concentration > 0.50;
+  const tScore = getTScore(days_since_last_rebalance);
 
-  const groups_triggered = [drift_crisis, market_shock, time_risk, concentration].filter(Boolean).length;
+  let delta = 0.0;
 
-  if (groups_triggered >= 2) return 1;   // clear rebalance
-  if (groups_triggered === 1) return null; // ambiguous — drop
-  return 0;                              // clear hold
+  if      (total_weight_drift > 0.80)        delta += 1.2;
+  else if (total_weight_drift > 0.50)        delta += 0.6;
+  else if (total_weight_drift < 0.20)        delta -= 0.8;
+
+  if      (max_stock_weight > 0.55)          delta += 0.8;
+  else if (max_stock_weight > 0.40)          delta += 0.3;
+  else if (max_stock_weight < 0.15)          delta -= 0.5;
+
+  if      (sector_concentration > 0.75)      delta += 0.8;
+  else if (sector_concentration > 0.55)      delta += 0.3;
+  else if (sector_concentration < 0.25)      delta -= 0.4;
+
+  if      (market_drawdown_90d < -0.20)      delta += 0.6;
+  else if (market_drawdown_90d < -0.10)      delta += 0.3;
+  else if (market_drawdown_90d > 0.05)       delta -= 0.4;
+
+  if (market_trend === 0)                    delta -= 0.4;
+
+  if      (market_volatility_30d > 0.025)    delta += 0.5;
+  else if (market_volatility_30d < 0.008)    delta -= 0.3;
+
+  if      (portfolio_volatility > 0.025)     delta += 0.4;
+  else if (portfolio_volatility < 0.005)     delta -= 0.2;
+
+  if (top3_concentration > 0.85)             delta += 0.4;
+
+  delta = Math.max(-2.5, Math.min(2.5, delta));
+  const score = tScore + delta;
+  const prob  = 1 / (1 + Math.exp(-score));
+
+  console.log(
+    `[label] days=${days_since_last_rebalance} t_score=${tScore} ` +
+    `delta=${delta.toFixed(4)} score=${score.toFixed(4)} prob=${prob.toFixed(4)}`
+  );
+
+  return prob >= 0.5 ? 1 : 0;
 }
 
 // ── Training dataset generation ───────────────────────────────────────────────
@@ -171,7 +209,6 @@ export function buildTrainingDataset(
 ): LabeledDataset {
   const X: number[][] = [];
   const y: number[] = [];
-  let nDropped = 0;
 
   const latestDate = marketRows[marketRows.length - 1].date;
 
@@ -185,12 +222,6 @@ export function buildTrainingDataset(
 
     const fv = buildFeatureVector(pf, mf, simulatedDays);
     const label = labelFeatureVector(fv);
-
-    if (label === null) {
-      nDropped++;
-      continue;
-    }
-
     X.push([...fv]);
     y.push(label);
   }
@@ -198,7 +229,7 @@ export function buildTrainingDataset(
   const nRebalance = y.filter((l) => l === 1).length;
   const nHold = y.filter((l) => l === 0).length;
 
-  return { X, y, nRebalance, nHold, nDropped };
+  return { X, y, nRebalance, nHold };
 }
 
 // ── Condition diagnostics (for result display) ────────────────────────────────
